@@ -30,6 +30,7 @@ type Instruction struct {
 	regIsExt bool
 	regOnly  bool
 	ext      byte
+	category Category
 }
 
 type (
@@ -54,6 +55,8 @@ type (
 		Value int16
 		BytesConsumed int
 	}
+
+	Category int
 )
 
 
@@ -168,6 +171,15 @@ func parseInstruction(idx int, binary []byte, ) (*Instruction, int, error) {
 		return inst, idx, nil
 
 	default:
+		_, ok := Jxxx_STRING_MAP[OpCode(b)]
+		if ok {
+			inst.opCode = OpCode(b)
+			inst.sbfs.W = false
+			idx++
+			idx+= getAddress(idx, binary, inst)
+			inst.category = CONTROL_TRANSFER
+			return inst, idx, nil
+		}
 		return &Instruction{}, idx+1, nil
 	}
 }

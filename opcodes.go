@@ -64,7 +64,7 @@ func (i *Instruction) StringNoExt() string {
 			return "cmp"
 		}
 	}
-	return "!UNKNOWN OPCODE!"
+	return "!Unknown OpCode!"
 }
 
 func (i *Instruction) StringWithExt() string {
@@ -84,5 +84,5 @@ func (i *Instruction) StringWithExt() string {
 			return "cmp"
 		}
 	}
-	return "!UNKNOWN OPCODE!"
+	return "!Unknown OpCode!"
 }
