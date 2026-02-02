@@ -21,6 +21,15 @@ Example 8086 instruction anatomy
 ────────────────────────────────
 */
 
+const (
+	DATA_TRANSFER Category = iota
+	ARITHMETIC
+	LOGIC
+	STRING_MANIPULATION
+	CONTROL_TRANSFER
+	PROCESSOR_CONTROL
+)
+
 func main() {
 	if len(os.Args) < 2 {
 		fmt.Println("provide binary path: <path/to/binary>")
@@ -52,7 +61,6 @@ func (i *Instruction) renderAsASM86() string {
 	if  *i == empty {
 		return "!Empty Instruction!"
 	}
-
 	var (
 		src,
 		dest,
@@ -61,7 +69,15 @@ func (i *Instruction) renderAsASM86() string {
 		size,
 		mnemonic string
 	)
-	size = ""
+
+	if i.category == CONTROL_TRANSFER {
+		offset := i.disp.Value
+		mnemonic, ok := Jxxx_STRING_MAP[i.opCode]
+		if ok {
+			return fmt.Sprintf("%s %d", mnemonic, offset)
+		}
+		return "!Unknown Control Transfer Instruction!"
+	}
 
 	if i.regIsExt {
 		mnemonic = i.StringWithExt()
@@ -71,6 +87,7 @@ func (i *Instruction) renderAsASM86() string {
 		reg = i.reg_ext.StringWithW(i.sbfs.W)
 	}
 	rm = i.RegMemString()
+	size = ""
 
 	// ──────────────
 	// Has Immediate
@@ -142,7 +159,7 @@ func (i *Instruction) RegMemString() string {
 	case MemMode_8, MemMode_16:
 		if disp.Value == 0 {
 			// TODO(Johan): Unsure if "+ 0" should be included
-			return rmString + "]"
+			return rmString + " + 0]"
 		}
 		if disp.Value > 0 {
 			return fmt.Sprintf("%s + %d]", rmString, disp.Value)
