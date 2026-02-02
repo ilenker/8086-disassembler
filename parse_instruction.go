@@ -10,6 +10,9 @@ import (
 //
 // If S is present, W must be present.
 //
+// Mod + r/m is one unit, there's never an r/m without mod
+// and vice versa.
+//
 // Byte Consumption:
 // Opcode Bytes (+1..2)
 // ModRM byte   (+1   )
@@ -26,6 +29,7 @@ type Instruction struct {
 	imm      Immediate
 	regIsExt bool
 	regOnly  bool
+	ext      byte
 }
 
 type (
@@ -57,18 +61,21 @@ type (
 func parseInstruction(idx int, binary []byte, ) (*Instruction, int, error) {
 	b := binary[idx]
 	inst := &Instruction{}
+	//────────────────────────────────────
+	//               MOV
+	//────────────────────────────────────
 	switch {
 	case OpCode(b)&MASK_MOV_RM == OP_MOV_RM:
 		inst.opCode = OP_MOV_RM
 		inst.sbfs.D = BitIsSet(b, D_MASK)
 		inst.sbfs.W = BitIsSet(b, W_MASK_DEFAULT)
 		idx++
-		idx += getModExtRM(idx, binary, inst)
+		idx += getModRegExtRM(idx, binary, inst)
 		idx += getDisplacement(idx, binary, inst)
 		inst.regIsExt = false
 		return inst, idx, nil
 
-	//MOV Imm -> Reg Pattern: 1011 wreg
+	// MOV Imm -> Reg Pattern: 1011 wreg
 	case OpCode(b)&MASK_MOV_IR == OP_MOV_IR:
 		inst.opCode = OP_MOV_IR
 		inst.sbfs.W = BitIsSet(b, BIT_3)
@@ -77,6 +84,87 @@ func parseInstruction(idx int, binary []byte, ) (*Instruction, int, error) {
 		idx += getImmediate(idx, binary, inst)
 		inst.regIsExt = false
 		inst.regOnly = true
+
+		return inst, idx, nil
+	
+	// MOV Imm -> Reg/Mem
+	// 1100011[w] [mod 0 0 0 r/m] [disp lo] [disp hi] [data] [data if w]
+	case OpCode(b)&MASK_MOV_IRM == OP_MOV_IRM:
+		inst.opCode = OP_MOV_IRM
+		inst.sbfs.W = BitIsSet(b, W_MASK_DEFAULT)
+		inst.sbfs.D = true
+		idx++
+		idx += getModRegExtRM(idx, binary, inst)
+		if inst.reg_ext == EXT_MOV_IRM {
+			inst.regIsExt = true
+		} else {
+			// TODO(Johan): What to do on unlikely event of these bits not being 000?
+			// Just carry on for now
+		}
+		idx += getDisplacement(idx, binary, inst)
+		idx += getImmediate(idx, binary, inst)
+		return inst, idx, nil
+
+	// MOV Mem <-> Ax
+	// Pattern: 1010 00dw [addr lo] [addr hi]
+	case OpCode(b)&MASK_MOV_M_TF_Ax == OP_MOV_M_TF_Ax:
+		inst.opCode = OP_MOV_M_TF_Ax
+		// Flipping this seems to work, but noting
+		// for possible future ramifications
+		inst.sbfs.D = !BitIsSet(b, D_MASK) 
+		inst.sbfs.W = BitIsSet(b, W_MASK_DEFAULT)
+		idx++
+		idx += getAddress(idx, binary, inst)
+		//inst.reg_ext = 0b000
+		inst.mode = 0b00
+		inst.reg_mem = 0b110
+		return inst, idx, nil
+
+
+	//────────────────────────────────────
+	//     100000SW ADD / SUB / CMP
+	//────────────────────────────────────
+	// Pattern: [1000_00sw][mod ext rm][disp l][disp h][data l][data h]
+	case OpCode(b)&MASK_GROUP_1 == OP_GROUP_1:
+		inst.opCode = OP_GROUP_1
+		inst.sbfs.S = BitIsSet(b, EXTRA_MASK_DEFAULT)
+		inst.sbfs.W = BitIsSet(b, W_MASK_DEFAULT)
+		inst.sbfs.D = true
+		idx++
+		idx += getModRegExtRM(idx, binary, inst)
+		switch ALUFunction(inst.reg_ext) {
+		case EXT_ADD,
+		     EXT_SUB,
+			 EXT_CMP:
+			inst.regIsExt = true
+			inst.ext = byte(inst.reg_ext)
+		}
+		idx += getDisplacement(idx, binary, inst)
+		idx += getImmediate(idx, binary, inst)
+		return inst, idx, nil
+
+	//────────────────────────────────────
+	//	ALU "Subroup": [00 "ext" IsImm D W] [mod reg r/m]? [disp/data][disp/data]
+	//────────────────────────────────────
+	// Pattern: [1000_00sw][mod ext rm][disp l][disp h][data l][data h]
+	case OpCode(b)&MASK_SUBGROUP_ALU == OP_SUBGROUP_ALU:
+		// "Extension" is handled slightly differently here
+		// because it's not an extension per say, but I'm treating
+		// it like one. Main Group [00] -> extended -> [00 000] = ADD
+		inst.opCode = OP_SUBGROUP_ALU
+		inst.ext = b&REG_OR_EXT_MASK
+		inst.sbfs.W = BitIsSet(b, W_MASK_DEFAULT)
+		if b&OP_ALU_IsToAx != 0 {
+			idx++
+			idx += getImmediate(idx, binary, inst)
+			inst.reg_mem = 0b000 // A
+			inst.mode = 0b11
+			return inst, idx, nil
+		}
+		inst.sbfs.D = BitIsSet(b, D_MASK)
+		idx++
+		idx += getModRegExtRM(idx, binary, inst)
+		idx += getDisplacement(idx, binary, inst)
 		return inst, idx, nil
 
 	default:
@@ -86,9 +174,12 @@ func parseInstruction(idx int, binary []byte, ) (*Instruction, int, error) {
 
 
 // Second Byte
-func getModExtRM(idx int, binary []byte, inst *Instruction) (int) {
+func getModRegExtRM(idx int, binary []byte, inst *Instruction) (int) {
 	b := binary[idx]
 	inst.mode = (Mode(b)&MODE_MASK) >> 6
+	if inst.mode == RegToReg {
+		inst.regOnly = true
+	}
 	inst.reg_ext = (RegisterOrExtension(b)&REG_OR_EXT_MASK) >> 3
 	inst.reg_mem = RegisterOrMemory(b)&REG_OR_MEM_MASK
 	return 1
@@ -172,6 +263,22 @@ func getImmediate(idx int, binary []byte, inst *Instruction) (int) {
 	return idx
 }
 
+func getAddress(idx int, binary []byte, inst *Instruction) (int) {
+	w := inst.sbfs.W
+	if w {
+		inst.disp = Displacement{
+			Value: int16(binary[idx]) | (int16(binary[idx+1]) << 8),
+			BytesConsumed: 2,
+		}
+		return 2
+	}
+	inst.disp = Displacement{
+		Value: int16(int8(binary[idx])),
+		BytesConsumed: 1,
+	}
+	return 1
+}
+
 const (
 	MemMode_0   Mode = 0b00
 	MemMode_8   Mode = 0b01
@@ -226,9 +333,4 @@ func (r RegisterOrMemory) StringWithW(word bool) string {
 		return WReg(r).String()
 	}
 	return WReg(r | 0b1000).String()
-}
-
-func (o OpCode) StringWithExt(ext RegisterOrExtension) string {
-	// TODO(Johan):
-	return ""
 }

@@ -58,15 +58,16 @@ func (i *Instruction) renderAsASM86() string {
 		dest,
 		rm,
 		reg,
-		imm,
+		size,
 		mnemonic string
 	)
+	size = ""
 
 	if i.regIsExt {
-		mnemonic = i.opCode.StringWithExt(i.reg_ext)
+		mnemonic = i.StringWithExt()
 		reg = ""
 	} else {
-		mnemonic = i.opCode.StringNoExt()
+		mnemonic = i.StringNoExt()
 		reg = i.reg_ext.StringWithW(i.sbfs.W)
 	}
 	rm = i.RegMemString()
@@ -75,31 +76,24 @@ func (i *Instruction) renderAsASM86() string {
 	// Has Immediate
 	// ──────────────
 	if i.imm.BytesConsumed != 0 {
-		imm = fmt.Sprintf("%d", i.imm.Value)
-		// ───
-		// Reg
-		// ───
-		if i.regOnly {
-			dest = reg
-			src = imm
-		// ───
-		// Mem
-		// ───
-		} else {
-			dest = rm
+		src = fmt.Sprintf("%d", i.imm.Value)
+		dest = rm
+		// ─────────────────────────
+		// Check Ambiguity Heuristic
+		// ─────────────────────────
+		if i.mode != 0b11 {
 			if i.sbfs.W {
-				src = "word " + imm
+				size = "word "
 			} else {
-				src = "byte " + imm
-			}
-			if i.mode != RegToReg {
+				size = "byte "
 			}
 		}
+	}
 
 	// ──────────────
 	// No Immediate
 	// ──────────────
-	} else {
+	if i.imm.BytesConsumed == 0 {
 		if i.sbfs.D {
 			dest = reg
 			src = rm
@@ -109,7 +103,7 @@ func (i *Instruction) renderAsASM86() string {
 		}
 	}
 
-	return fmt.Sprintf("%s %s, %s", mnemonic, dest, src)
+	return fmt.Sprintf("%s %s%s, %s", mnemonic, size, dest, src)
 }
 
 // MOD + RM table
