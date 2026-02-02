@@ -3,6 +3,7 @@ package main
 import (
 	"os"
 	"fmt"
+	"time"
 )
 
 /*
@@ -45,6 +46,7 @@ func main() {
 	i := 0
 	var inst *Instruction
 	var instructions = make([]Instruction, 0, 32)
+	start := time.Now()
 	for i < len(binary) {
 		inst, i, err = parseInstruction(i, binary)
 		instructions = append(instructions, *inst)
@@ -54,6 +56,12 @@ func main() {
 		s := inst.renderAsASM86()
 		fmt.Println(s)
 	}
+	totalTime := time.Since(start)
+	fmt.Println("----------------------------------")
+	fmt.Printf("Bytes Processed:\t%d\n", len(binary))
+	fmt.Printf("Instruction Count:\t%d\n", len(instructions))
+	fmt.Printf("Total Time:\t\t%v\n", totalTime)
+	fmt.Printf("Time per instruction:\t%v\n", totalTime/time.Duration(len(instructions)))
 }
 
 func (i *Instruction) renderAsASM86() string {
