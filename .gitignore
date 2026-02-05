@@ -18,14 +18,26 @@
 !LICENSE
 
 # .asm and binaries
-!asm/37_single_register_mov
 !asm/37_single_register_mov.asm
-!asm/38_many_register_mov
 !asm/38_many_register_mov.asm
-!asm/39_more_movs
 !asm/39_more_movs.asm
-!asm/40_challenge_movs
 !asm/40_challenge_movs.asm
+!asm/41_add_sub_cmp_jnz.asm
+!asm/42_completionist.asm
+
+!asm/no_comments/37_single_register_mov.asm
+!asm/no_comments/38_many_register_mov.asm
+!asm/no_comments/39_more_movs.asm
+!asm/no_comments/40_challenge_movs.asm
+!asm/no_comments/41_add_sub_cmp_jnz.asm
+!asm/no_comments/42_completionist.asm
+
+!binaries/37_single_register_mov
+!binaries/38_many_register_mov
+!binaries/39_more_movs
+!binaries/40_challenge_movs
+!binaries/41_add_sub_cmp_jnz
+!binaries/42_completionist
 
 # ...even if they are in subdirectories
 !*/
