@@ -4,6 +4,7 @@ import (
 	"os"
 	"fmt"
 	"time"
+	"github.com/ilenker/8086-disassembler/internal/sim"
 )
 
 /*
@@ -23,13 +24,26 @@ Example 8086 instruction anatomy
 */
 
 const (
-	DATA_TRANSFER Category = iota
+	UNCATEGORIZED Category = iota
+	DATA_TRANSFER
 	ARITHMETIC
 	LOGIC
 	STRING_MANIPULATION
 	CONTROL_TRANSFER
 	PROCESSOR_CONTROL
 )
+
+func (c Category) String() string {
+    return [...]string{
+		"UNCATEGORIZED",
+		"DATA_TRANSFER",
+		"ARITHMETIC",
+		"LOGIC",
+		"STRING_MANIPULATION",
+		"CONTROL_TRANSFER",
+		"PROCESSOR_CONTROL",
+	}[c]
+}
 
 func main() {
 	if len(os.Args) < 2 {
@@ -55,16 +69,30 @@ func main() {
 	}
 
 	if args.showBinary {
+		fmt.Println("Binary input: ")
 		for i := range binary {
 			fmt.Printf("%08b ", binary[i])
+			if i % 4 == 3 {
+				fmt.Println()
+			}
 		}
-		fmt.Println()
+		fmt.Println("\n_________________________")
 	}
+
+	cpu := sim.CPUContext{}
 
 	fmt.Print("bits 16\n\n")
 	for _, inst := range instructions {
 		s := inst.renderAsASM86()
 		fmt.Println(s)
+		inst.ExecInstruction(&cpu)
+		fmt.Println(cpu.String())
+		//if args.showBinary {
+		//	fmt.Printf(inst.BinaryString())
+		//}
+		if args.showStruct {
+			inst.printStruct()
+		}
 	}
 
 	if args.verbose {
@@ -91,15 +119,8 @@ func (i *Instruction) renderAsASM86() string {
 		mnemonic string
 	)
 
-	if args.showBinary {
-		fmt.Printf(i.BinaryString())
-	}
-	if args.showStruct {
-		i.printStruct()
-	}
-
 	if i.category == CONTROL_TRANSFER {
-		offset := i.disp.Value
+		offset := int8(i.disp.Value)
 		mnemonic, ok := Jxxx_STRING_MAP[i.opCode]
 		if ok {
 			return fmt.Sprintf("%s %d", mnemonic, offset)

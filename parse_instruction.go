@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"github.com/ilenker/8086-disassembler/internal/sim"
 )
 
 // Notes:
@@ -28,9 +29,12 @@ type Instruction struct {
 	disp     Displacement
 	imm      Immediate
 	regIsExt bool
-	regOnly  bool
 	ext      byte
 	category Category
+
+	// "intermediate representation" 
+	dest sim.Argument
+	src  sim.Argument
 
 	debug struct {
 		raw   string
@@ -75,12 +79,14 @@ func parseInstruction(idx int, binary []byte, ) (*Instruction, int, error) {
 	b := binary[idx]
 	inst := &Instruction{}
 															inst.debug.byte1 = fmt.Sprintf("%08b", b)
+	// TODO(Johan): Handle NO-OP
 	//────────────────────────────────────
 	//               MOV
 	//────────────────────────────────────
+	// MOV	r/m	<->	reg
+	// [1000 10dw]	[mod reg r/m]	[disp lo]	[disp hi]
 	switch {
 	case OpCode(b)&MASK_MOV_RM == OP_MOV_RM:
-		inst.category = DATA_TRANSFER
 		inst.opCode = OP_MOV_RM
 		inst.sbfs.D = BitIsSet(b, D_MASK)
 		inst.sbfs.W = BitIsSet(b, W_MASK_DEFAULT)
@@ -88,18 +94,37 @@ func parseInstruction(idx int, binary []byte, ) (*Instruction, int, error) {
 		idx += getModRegExtRM(idx, binary, inst)
 		idx += getDisplacement(idx, binary, inst)
 		inst.regIsExt = false
+		inst.category = DATA_TRANSFER
+
 		return inst, idx, nil
 
 	// MOV Imm -> Reg Pattern: 1011 wreg
+	// [1011 wreg] [data lo] [data hi]
 	case OpCode(b)&MASK_MOV_IR == OP_MOV_IR:
 		inst.opCode = OP_MOV_IR
 		inst.sbfs.W = BitIsSet(b, BIT_3)
-		inst.reg_mem = RegisterOrMemory(b)&0b0000_0111
+		reg := (b)&0b0000_0111 // Rare case of Byte1 using this mask
+		inst.reg_mem = RegisterOrMemory(reg)
 		inst.mode = ImmToReg_IMPLIED
 		idx++
 		idx += getImmediate(idx, binary, inst)
 		inst.regIsExt = false
-		inst.regOnly = true
+		inst.category = DATA_TRANSFER
+		// --- IntRep ---
+		inst.dest.Type = sim.ArgReg
+		inst.dest.Reg.Name = sim.RegName(reg)
+		if inst.sbfs.W {
+			inst.dest.Reg.Name = sim.RegName(reg)
+			inst.dest.Reg.Subset = sim.SubsetX
+		} else
+		if reg >= byte(AL) && reg < byte(AH) {
+			inst.dest.Reg.Name = sim.RegName(reg)
+			inst.dest.Reg.Subset = sim.SubsetLo
+		} else
+		if reg >= byte(AH) && reg < byte(AX) {
+			inst.dest.Reg.Name = sim.RegName(reg-4)
+			inst.dest.Reg.Subset = sim.SubsetHi
+		}
 
 		return inst, idx, nil
 	
@@ -108,23 +133,27 @@ func parseInstruction(idx int, binary []byte, ) (*Instruction, int, error) {
 	case OpCode(b)&MASK_MOV_IRM == OP_MOV_IRM:
 		inst.opCode = OP_MOV_IRM
 		inst.sbfs.W = BitIsSet(b, W_MASK_DEFAULT)
-		inst.sbfs.D = true
+		//inst.sbfs.D = true
 		idx++
 		idx += getModRegExtRM(idx, binary, inst)
 		if inst.reg_ext == EXT_MOV_IRM {
 			inst.regIsExt = true
 		} else {
 			// TODO(Johan): What to do on unlikely event of these bits not being 000?
-			// Just carry on for now
+			panic("unknown opcode")
 		}
 		idx += getDisplacement(idx, binary, inst)
 		idx += getImmediate(idx, binary, inst)
+		inst.category = DATA_TRANSFER
+
 		return inst, idx, nil
 
-	// MOV Mem <-> Ax
+	// MOV Mem <-> Ax ("Direct address")
 	// Pattern: 1010 00dw [addr lo] [addr hi]
 	case OpCode(b)&MASK_MOV_M_TF_Ax == OP_MOV_M_TF_Ax:
 		inst.opCode = OP_MOV_M_TF_Ax
+		inst.mode = 0b00     // Implied "Mem Mode"
+		inst.reg_mem = 0b110 // Implied "Direct Address"
 		// Flipping this seems to work, but noting
 		// for possible future ramifications
 		inst.sbfs.D = !BitIsSet(b, D_MASK) 
@@ -132,8 +161,8 @@ func parseInstruction(idx int, binary []byte, ) (*Instruction, int, error) {
 		idx++
 		idx += getAddress(idx, binary, inst)
 		//inst.reg_ext = 0b000
-		inst.mode = 0b00
-		inst.reg_mem = 0b110
+		inst.category = DATA_TRANSFER
+
 		return inst, idx, nil
 
 
@@ -145,8 +174,10 @@ func parseInstruction(idx int, binary []byte, ) (*Instruction, int, error) {
 		inst.opCode = OP_GROUP_1
 		inst.sbfs.S = BitIsSet(b, EXTRA_MASK_DEFAULT)
 		inst.sbfs.W = BitIsSet(b, W_MASK_DEFAULT)
-		inst.sbfs.D = true
 		idx++
+		// TODO(Johan): Did not check this thoroughly for IntRep setting,
+		// trusting it works but note this case for first
+		// check when things go wrong
 		idx += getModRegExtRM(idx, binary, inst)
 		switch ALUFunction(inst.reg_ext) {
 		case EXT_ADD,
@@ -157,6 +188,8 @@ func parseInstruction(idx int, binary []byte, ) (*Instruction, int, error) {
 		}
 		idx += getDisplacement(idx, binary, inst)
 		idx += getImmediate(idx, binary, inst)
+		inst.category = ARITHMETIC
+
 		return inst, idx, nil
 
 	//────────────────────────────────────────────────────────────────────────────
@@ -174,12 +207,25 @@ func parseInstruction(idx int, binary []byte, ) (*Instruction, int, error) {
 			idx += getImmediate(idx, binary, inst)
 			inst.reg_mem = 0b000 // A
 			inst.mode = ImmToReg_IMPLIED
+			// IntRep
+			inst.dest.Type = sim.ArgReg
+			inst.dest.Reg.Name = sim.AX
+			if inst.sbfs.W {
+				inst.dest.Reg.Subset = sim.SubsetX
+			} else {
+				// AH is exempt from "to accumulator" instructions
+				inst.dest.Reg.Subset = sim.SubsetLo
+			}
+			inst.category = ARITHMETIC
+
 			return inst, idx, nil
 		}
 		inst.sbfs.D = BitIsSet(b, D_MASK)
 		idx++
 		idx += getModRegExtRM(idx, binary, inst)
 		idx += getDisplacement(idx, binary, inst)
+		inst.category = ARITHMETIC
+
 		return inst, idx, nil
 
 	default:
@@ -188,8 +234,15 @@ func parseInstruction(idx int, binary []byte, ) (*Instruction, int, error) {
 			inst.opCode = OpCode(b)
 			inst.sbfs.W = false
 			idx++
-			idx+= getAddress(idx, binary, inst)
+			inst.disp = Displacement{
+				Value: int16(binary[idx]),
+				BytesConsumed: 1,
+			}
+			inst.src.Type = sim.ArgImm
+			inst.src.ImmValue = inst.disp.Value
+			idx++
 			inst.category = CONTROL_TRANSFER
+
 			return inst, idx, nil
 		}
 		return &Instruction{}, idx+1, nil
@@ -203,11 +256,105 @@ func getModRegExtRM(idx int, binary []byte, inst *Instruction) (int) {
 	b := binary[idx]
 															inst.debug.byte2 = fmt.Sprintf("%08b", b)
 	inst.mode = (Mode(b)&MODE_MASK) >> 6
-	if inst.mode == RegToReg {
-		inst.regOnly = true
-	}
 	inst.reg_ext = (RegisterOrExtension(b)&REG_OR_EXT_MASK) >> 3
 	inst.reg_mem = RegisterOrMemory(b)&REG_OR_MEM_MASK
+
+	// --- Intermediate Representation ---:
+	// TODO(Johan): Move this into instruction method
+	w := inst.sbfs.W
+	destIsReg := inst.sbfs.D
+
+	// Determine RM Reg-or-Mem status
+	argRM  := sim.Argument{}
+	rm     := byte(inst.reg_mem)
+	regext := byte(inst.reg_ext)
+	mod    := inst.mode
+	// R/M is Reg
+	if inst.mode == RegToReg {
+		argRM.Type = sim.ArgReg
+		if w {
+			argRM.Reg.Name = sim.RegName(rm)
+			argRM.Reg.Subset = sim.SubsetX
+		} else
+		if rm >= byte(AL) && rm < byte(AH) {
+			argRM.Reg.Name = sim.RegName(rm)
+			argRM.Reg.Subset = sim.SubsetLo
+		} else
+		if rm >= byte(AH) && rm < byte(AX) {
+			argRM.Reg.Name = sim.RegName(rm-4)
+			argRM.Reg.Subset = sim.SubsetHi
+		}
+	} else {
+		// R/M is Mem
+		argRM.Type = sim.ArgMem
+		// Can't access Displacement...
+		argRM.Mem.Disp = 105
+		switch rm {
+		case 0b000:
+			argRM.Mem.BaseReg  = sim.BX
+			argRM.Mem.IndexReg = sim.SI
+		case 0b001:
+			argRM.Mem.BaseReg = sim.BX
+			argRM.Mem.IndexReg = sim.DI
+		case 0b010:
+			argRM.Mem.BaseReg = sim.BP
+			argRM.Mem.IndexReg = sim.SI
+		case 0b011:
+			argRM.Mem.BaseReg = sim.BP
+			argRM.Mem.IndexReg = sim.DI
+		case 0b100:
+			argRM.Mem.IndexReg = sim.SI
+			argRM.Mem.BaseReg = sim.NilX
+		case 0b101:
+			argRM.Mem.IndexReg = sim.DI
+			argRM.Mem.BaseReg = sim.NilX
+		case 0b110:
+			// Exception
+			if mod != 0b00 {
+				argRM.Mem.BaseReg = sim.BP
+			} else {
+				argRM.Mem.BaseReg = sim.NilX
+			}
+			argRM.Mem.IndexReg = sim.NilX
+		case 0b111:
+			argRM.Mem.BaseReg = sim.BX
+			argRM.Mem.IndexReg = sim.NilX
+		}
+	}
+
+	// Determine RegExt Reg-or-Ext status
+	argReg := sim.Argument{}
+	// TODO(Johan): Make sure to add the rest
+	// of the relevant groups to this check
+	if inst.opCode == OP_GROUP_1 || inst.opCode == OP_MOV_IRM {
+		// Reg is Ext
+		argReg.Type = sim.ArgNone
+	} else {
+		// Reg is Reg
+		argReg.Type = sim.ArgReg
+		if w {
+			argReg.Reg.Subset = sim.SubsetX
+			argReg.Reg.Name = sim.RegName(regext)
+		} else
+		if regext >= byte(AL) && regext < byte(AH) {
+			argReg.Reg.Name = sim.RegName(regext)
+			argReg.Reg.Subset = sim.SubsetLo
+		} else
+		if regext >= byte(AH) && regext < byte(AX) {
+			argReg.Reg.Name = sim.RegName(regext-4)
+			argReg.Reg.Subset = sim.SubsetHi
+		}
+	}
+
+	// Check Direction
+	if destIsReg {
+		inst.dest = argReg
+		inst.src  = argRM
+	} else {
+		inst.dest = argRM
+		inst.src  = argReg
+	}
+
 	return 1
 }
 
@@ -220,7 +367,6 @@ func getDisplacement(idx int, binary []byte, inst *Instruction) (int) {
 	var dispValue int16
 	byteCount := 0
 
-	// TODO(): 
 	switch mode {
 	case MemMode_0:
 		// Direct Address (2x disp bytes, 16bit address)
@@ -246,6 +392,15 @@ func getDisplacement(idx int, binary []byte, inst *Instruction) (int) {
 		Value: dispValue,
 		BytesConsumed: byteCount,
 	}
+
+	// --- Intermediate Representation ---:
+	if inst.dest.Type == sim.ArgMem {
+		inst.dest.Mem.Disp = dispValue
+	}
+	if inst.src.Type == sim.ArgMem {
+		inst.src.Mem.Disp = dispValue
+	}
+
 	return byteCount
 }
 
@@ -254,6 +409,17 @@ func getDisplacement(idx int, binary []byte, inst *Instruction) (int) {
 func getImmediate(idx int, binary []byte, inst *Instruction) (int) {
 	word := inst.sbfs.W
 	signExtend := inst.sbfs.S
+
+	// Set the intermediate representation after immediate fields are set
+	defer func() {
+		if inst.src.Type != sim.ArgNone {
+			inst.printStruct()
+			panic("Assertion failed(inst.src.Type == sim.ArgNone):\n" +
+				  "Source field set on immediate instruction before parsing of immediate bytes")
+		}
+		inst.src.Type = sim.ArgImm
+		inst.src.ImmValue = inst.imm.Value
+	}()
 
 	switch {
 	case !signExtend && !word:  
@@ -300,21 +466,43 @@ func getImmediate(idx int, binary []byte, inst *Instruction) (int) {
 
 func getAddress(idx int, binary []byte, inst *Instruction) (int) {
 	w := inst.sbfs.W
-	if w {
-		inst.disp = Displacement{
-			Value: int16(binary[idx]) | (int16(binary[idx+1]) << 8),
-			BytesConsumed: 2,
-		}
-															inst.debug.disp1 = fmt.Sprintf("(addr)%08b", binary[idx])
-															inst.debug.disp2 = fmt.Sprintf("(addr)%08b", binary[idx+1])
-		return 2
-	}
+	destIsMem := inst.sbfs.D
 	inst.disp = Displacement{
-		Value: int16(int8(binary[idx])),
-		BytesConsumed: 1,
+		Value: int16(binary[idx]) | (int16(binary[idx+1]) << 8),
+		BytesConsumed: 2,
 	}
-															inst.debug.disp1 = fmt.Sprintf("(addr)%08b", binary[idx])
-	return 1
+											inst.debug.disp1 = fmt.Sprintf("(addr)%08b", binary[idx])
+											inst.debug.disp2 = fmt.Sprintf("(addr)%08b", binary[idx+1])
+	// --- Intermediate Representation ---:
+	if !destIsMem {
+		inst.dest.Type = sim.ArgMem
+		inst.dest.Mem.Disp = inst.disp.Value
+		inst.dest.Mem.BaseReg = sim.NilX
+		inst.dest.Mem.IndexReg = sim.NilX
+
+		inst.src.Type = sim.ArgReg
+		if w {
+			inst.src.Reg.Subset = sim.SubsetX
+		} else {
+			// AH is exempt from "to accumulator" instructions
+			inst.src.Reg.Subset = sim.SubsetLo
+		}
+
+	} else {
+		inst.dest.Type = sim.ArgReg
+		if w {
+			inst.dest.Reg.Subset = sim.SubsetX
+		} else {
+			// AH is exempt from "to accumulator" instructions
+			inst.dest.Reg.Subset = sim.SubsetLo
+		}
+
+		inst.src.Type = sim.ArgMem
+		inst.src.Mem.Disp = inst.disp.Value
+		inst.src.Mem.BaseReg = sim.NilX
+		inst.src.Mem.IndexReg = sim.NilX
+	}
+	return 2
 }
 
 const (
@@ -434,16 +622,6 @@ func (i *Instruction) BinaryString() string {
 		)
 }
 
-func (c Category) String() string {
-    return [...]string{
-		"DATA_TRANSFER",
-		"ARITHMETIC",
-		"LOGIC",
-		"STRING_MANIPULATION",
-		"CONTROL_TRANSFER",
-		"PROCESSOR_CONTROL",
-	}[c]
-}
 
 func (m Mode) String() string {
 	switch m {
