@@ -4,7 +4,7 @@ c2="[38;5;208m"
 c1="[38;5;103m"
 cr="[39m"
 
-args=(--color -y)
+args=(-wB --color -y)
 
 header() {
 	printf "%-79s %s\n" "${c2}[Reference]${cr}" "${c2}[Output]${cr}"
