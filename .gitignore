@@ -17,7 +17,11 @@
 !README.md
 !LICENSE
 
-# .asm and binaries
+# --- scripts ---
+!run_tests.sh
+!test_line.sh
+
+# --- .asm and binaries ---
 !asm/37_single_register_mov.asm
 !asm/38_many_register_mov.asm
 !asm/39_more_movs.asm
