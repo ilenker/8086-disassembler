@@ -31,6 +31,16 @@ type Instruction struct {
 	regOnly  bool
 	ext      byte
 	category Category
+
+	debug struct {
+		raw   string
+		byte1 string
+		byte2 string
+		disp1 string
+		disp2 string
+		data1 string
+		data2 string
+	}
 }
 
 type (
@@ -64,11 +74,13 @@ type (
 func parseInstruction(idx int, binary []byte, ) (*Instruction, int, error) {
 	b := binary[idx]
 	inst := &Instruction{}
+															inst.debug.byte1 = fmt.Sprintf("%08b", b)
 	//────────────────────────────────────
 	//               MOV
 	//────────────────────────────────────
 	switch {
 	case OpCode(b)&MASK_MOV_RM == OP_MOV_RM:
+		inst.category = DATA_TRANSFER
 		inst.opCode = OP_MOV_RM
 		inst.sbfs.D = BitIsSet(b, D_MASK)
 		inst.sbfs.W = BitIsSet(b, W_MASK_DEFAULT)
@@ -82,7 +94,8 @@ func parseInstruction(idx int, binary []byte, ) (*Instruction, int, error) {
 	case OpCode(b)&MASK_MOV_IR == OP_MOV_IR:
 		inst.opCode = OP_MOV_IR
 		inst.sbfs.W = BitIsSet(b, BIT_3)
-		inst.reg_ext = RegisterOrExtension(b)&0b0000_0111
+		inst.reg_mem = RegisterOrMemory(b)&0b0000_0111
+		inst.mode = ImmToReg_IMPLIED
 		idx++
 		idx += getImmediate(idx, binary, inst)
 		inst.regIsExt = false
@@ -146,10 +159,9 @@ func parseInstruction(idx int, binary []byte, ) (*Instruction, int, error) {
 		idx += getImmediate(idx, binary, inst)
 		return inst, idx, nil
 
-	//────────────────────────────────────
+	//────────────────────────────────────────────────────────────────────────────
 	//	ALU "Subroup": [00 "ext" IsImm D W] [mod reg r/m]? [disp/data][disp/data]
-	//────────────────────────────────────
-	// Pattern: [1000_00sw][mod ext rm][disp l][disp h][data l][data h]
+	//────────────────────────────────────────────────────────────────────────────
 	case OpCode(b)&MASK_SUBGROUP_ALU == OP_SUBGROUP_ALU:
 		// "Extension" is handled slightly differently here
 		// because it's not an extension per say, but I'm treating
@@ -161,7 +173,7 @@ func parseInstruction(idx int, binary []byte, ) (*Instruction, int, error) {
 			idx++
 			idx += getImmediate(idx, binary, inst)
 			inst.reg_mem = 0b000 // A
-			inst.mode = 0b11
+			inst.mode = ImmToReg_IMPLIED
 			return inst, idx, nil
 		}
 		inst.sbfs.D = BitIsSet(b, D_MASK)
@@ -187,7 +199,9 @@ func parseInstruction(idx int, binary []byte, ) (*Instruction, int, error) {
 
 // Second Byte
 func getModRegExtRM(idx int, binary []byte, inst *Instruction) (int) {
+
 	b := binary[idx]
+															inst.debug.byte2 = fmt.Sprintf("%08b", b)
 	inst.mode = (Mode(b)&MODE_MASK) >> 6
 	if inst.mode == RegToReg {
 		inst.regOnly = true
@@ -212,15 +226,20 @@ func getDisplacement(idx int, binary []byte, inst *Instruction) (int) {
 		// Direct Address (2x disp bytes, 16bit address)
 		if rm == 0b110 {
 			dispValue = int16(binary[idx]) | (int16(binary[idx+1]) << 8)
+															inst.debug.disp1 = fmt.Sprintf("%08b", binary[idx])
+															inst.debug.disp2 = fmt.Sprintf("%08b", binary[idx+1])
 			byteCount = 2
 		}
 	case MemMode_8:
 		dispValue = int16(int8(binary[idx]))
+															inst.debug.disp1 = fmt.Sprintf("%08b", binary[idx])
 		byteCount = 1
 
 	case MemMode_16:
 		dispValue = int16(binary[idx]) | (int16(binary[idx+1]) << 8)
 		byteCount = 2
+															inst.debug.disp1 = fmt.Sprintf("%08b", binary[idx])
+															inst.debug.disp2 = fmt.Sprintf("%08b", binary[idx+1])
 	}
 
 	inst.disp = Displacement{
@@ -242,6 +261,7 @@ func getImmediate(idx int, binary []byte, inst *Instruction) (int) {
 			Value: int16(int8(binary[idx])),
 			BytesConsumed: 1,
 		}
+															inst.debug.data1 = fmt.Sprintf("%08b", binary[idx])
 		return 1
 
 	case !signExtend && word:  
@@ -249,6 +269,8 @@ func getImmediate(idx int, binary []byte, inst *Instruction) (int) {
 			Value: int16(binary[idx]) | (int16(binary[idx+1]) << 8),
 			BytesConsumed: 2,
 		}
+															inst.debug.data1 = fmt.Sprintf("%08b", binary[idx])
+															inst.debug.data2 = fmt.Sprintf("%08b", binary[idx+1])
 		return 2
 
 	case signExtend && word:
@@ -259,6 +281,7 @@ func getImmediate(idx int, binary []byte, inst *Instruction) (int) {
 		} else {
 			valExtended = int16(int8(val))
 		}
+															inst.debug.data1 = fmt.Sprintf("%08b", val)
 		inst.imm = Immediate{
 			Value: valExtended,
 			BytesConsumed: 1,
@@ -282,20 +305,24 @@ func getAddress(idx int, binary []byte, inst *Instruction) (int) {
 			Value: int16(binary[idx]) | (int16(binary[idx+1]) << 8),
 			BytesConsumed: 2,
 		}
+															inst.debug.disp1 = fmt.Sprintf("(addr)%08b", binary[idx])
+															inst.debug.disp2 = fmt.Sprintf("(addr)%08b", binary[idx+1])
 		return 2
 	}
 	inst.disp = Displacement{
 		Value: int16(int8(binary[idx])),
 		BytesConsumed: 1,
 	}
+															inst.debug.disp1 = fmt.Sprintf("(addr)%08b", binary[idx])
 	return 1
 }
 
 const (
-	MemMode_0   Mode = 0b00
-	MemMode_8   Mode = 0b01
-	MemMode_16  Mode = 0b10
-	RegToReg    Mode = 0b11
+	MemMode_0  Mode = 0b00
+	MemMode_8  Mode = 0b01
+	MemMode_16 Mode = 0b10
+	RegToReg   Mode = 0b11
+	ImmToReg_IMPLIED Mode = 0b11111111
 )
 
 //////////////////
@@ -328,7 +355,6 @@ func BitIsSet(b, mask byte) bool {
 }
 
 
-
 /////////////////////
 // String Functions
 /////////////////////
@@ -345,4 +371,87 @@ func (r RegisterOrMemory) StringWithW(word bool) string {
 		return WReg(r).String()
 	}
 	return WReg(r | 0b1000).String()
+}
+
+func (i *Instruction) BinaryString() string {
+	var (
+		byte1,
+		byte2,
+		disp1,
+		disp2,
+		data1,
+		data2 string
+	)
+
+	cbyte1 := "[48;2;32;18;77m"
+	cbyte2 := "[48;2;9;71;41m"
+
+	cdisp1 := "[48;2;1;63;64m"
+	cdisp2 := "[48;2;7;81;82m"
+
+	cdata1 := "[48;2;67;60;30m"
+	cdata2 := "[48;2;86;77;70m"
+
+	cmod   := "[38;2;30;255;162m"
+	creg   := "[38;2;255;211;87m"
+	crm    := "[38;2;91;126;129m"
+	cr := "[49m[39m"
+
+	if i.debug.byte1 == "" {
+		byte1 = "NO OPCODE"
+	} else {
+		byte1 = i.debug.byte1
+	}
+
+	if i.debug.byte2 == "" {
+		byte2 = "NO MOD RM"
+	} else {
+		byte2 = (
+		cmod + i.debug.byte2[0:2] + " " +
+		creg + i.debug.byte2[2:5] + " " +
+		crm  + i.debug.byte2[5: ] + cr)
+	}
+
+	disp1 = i.debug.disp1
+	disp2 = i.debug.disp2
+	data1 = i.debug.data1
+	data2 = i.debug.data2
+
+	return fmt.Sprintln(
+		cbyte1,
+		byte1,
+		cbyte2,
+		byte2,
+		cdisp1,
+		disp1,
+		cdisp2,
+		disp2,
+		cdata1,
+		data1,
+		cdata2,
+		data2,
+		cr,
+		)
+}
+
+func (c Category) String() string {
+    return [...]string{
+		"DATA_TRANSFER",
+		"ARITHMETIC",
+		"LOGIC",
+		"STRING_MANIPULATION",
+		"CONTROL_TRANSFER",
+		"PROCESSOR_CONTROL",
+	}[c]
+}
+
+func (m Mode) String() string {
+	switch m {
+	case MemMode_0:  return "00 (Mem 0 byte disp)"
+	case MemMode_8:  return "01 (Mem 1 byte disp)"
+	case MemMode_16: return "10 (Mem 2 byte disp)"
+	case RegToReg:   return "11 (Reg->Reg)"
+	case ImmToReg_IMPLIED:   return "xxxx(Imm->Reg Implied)"
+	}
+	return "unknown mode"
 }

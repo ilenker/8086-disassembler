@@ -43,6 +43,8 @@ func main() {
 		return
 	}
 
+	getArgs()
+
 	i := 0
 	var inst *Instruction
 	var instructions = make([]Instruction, 0, 32)
@@ -52,16 +54,27 @@ func main() {
 		instructions = append(instructions, *inst)
 	}
 
+	if args.showBinary {
+		for i := range binary {
+			fmt.Printf("%08b ", binary[i])
+		}
+		fmt.Println()
+	}
+
+	fmt.Print("bits 16\n\n")
 	for _, inst := range instructions {
 		s := inst.renderAsASM86()
 		fmt.Println(s)
 	}
-	totalTime := time.Since(start)
-	fmt.Println("----------------------------------")
-	fmt.Printf("Bytes Processed:\t%d\n", len(binary))
-	fmt.Printf("Instruction Count:\t%d\n", len(instructions))
-	fmt.Printf("Total Time:\t\t%v\n", totalTime)
-	fmt.Printf("Time per instruction:\t%v\n", totalTime/time.Duration(len(instructions)))
+
+	if args.verbose {
+		totalTime := time.Since(start)
+		fmt.Println("----------------------------------")
+		fmt.Printf("Bytes Processed:\t%d\n", len(binary))
+		fmt.Printf("Instruction Count:\t%d\n", len(instructions))
+		fmt.Printf("Total Time:\t\t%v\n", totalTime)
+		fmt.Printf("Time per instruction:\t%v\n", totalTime/time.Duration(len(instructions)))
+	}
 }
 
 func (i *Instruction) renderAsASM86() string {
@@ -77,6 +90,13 @@ func (i *Instruction) renderAsASM86() string {
 		size,
 		mnemonic string
 	)
+
+	if args.showBinary {
+		fmt.Printf(i.BinaryString())
+	}
+	if args.showStruct {
+		i.printStruct()
+	}
 
 	if i.category == CONTROL_TRANSFER {
 		offset := i.disp.Value
@@ -102,32 +122,33 @@ func (i *Instruction) renderAsASM86() string {
 	// ──────────────
 	if i.imm.BytesConsumed != 0 {
 		src = fmt.Sprintf("%d", i.imm.Value)
+		dest = reg
 		dest = rm
 		// ─────────────────────────
 		// Check Ambiguity Heuristic
 		// ─────────────────────────
-		if i.mode != 0b11 {
+		if i.mode != RegToReg && i.mode != ImmToReg_IMPLIED {
 			if i.sbfs.W {
 				size = "word "
 			} else {
 				size = "byte "
 			}
 		}
+		goto out
 	}
 
 	// ──────────────
 	// No Immediate
 	// ──────────────
-	if i.imm.BytesConsumed == 0 {
-		if i.sbfs.D {
-			dest = reg
-			src = rm
-		} else {
-			dest = rm
-			src = reg
-		}
+	if i.sbfs.D {
+		dest = reg
+		src = rm
+	} else {
+		dest = rm
+		src = reg
 	}
 
+	out:
 	return fmt.Sprintf("%s %s%s, %s", mnemonic, size, dest, src)
 }
 
@@ -146,7 +167,7 @@ func (i *Instruction) RegMemString() string {
 		return fmt.Sprintf("[%d]", uint16(disp.Value))
 	}
 
-	if mod == RegToReg {
+	if mod == RegToReg || mod == ImmToReg_IMPLIED {
 		return rm.StringWithW(w)
 	}
 
@@ -175,4 +196,58 @@ func (i *Instruction) RegMemString() string {
 		return fmt.Sprintf("%s - %d]", rmString, -disp.Value)
 	}
 	return "!R/M PARSE ERROR!"
+}
+
+
+var args struct {
+	verbose    bool
+	showBinary bool
+	showStruct bool
+}
+
+func getArgs() {
+	if len(os.Args) > 2 {
+		for i := 2; i < len(os.Args); i++ {
+			switch os.Args[i] {
+			case "-v":
+				args.verbose = true
+			case "--show-binary":
+				args.showBinary = true
+			case "--show-struct":
+				args.showStruct = true
+			}
+		}
+	}
+}
+
+func Bool2Str(b bool) string {
+    if b {
+        return "1"
+    } else {
+        return "_"
+    }
+}
+
+func (i *Instruction) printStruct() {
+	fmt.Println("────────────────────────────")
+	fmt.Printf("opCode:        %08b\n", i.opCode)
+	fmt.Printf("Mnemonic:      %v\n", i.StringNoExt())
+	fmt.Printf("   (ext):      %v\n", i.StringWithExt())
+	fmt.Printf("sbfs:          S:%s W:%s D:%s V:%s Z:%s\n",
+		Bool2Str(i.sbfs.S),
+		Bool2Str(i.sbfs.W),
+		Bool2Str(i.sbfs.D),
+		Bool2Str(i.sbfs.V),
+		Bool2Str(i.sbfs.Z),
+		)
+	fmt.Printf("mode:          %v\n", i.mode)
+	fmt.Printf("reg_ext:       %03b\n", i.reg_ext)
+	fmt.Printf("reg_mem:       %03b\n", i.reg_mem)
+	fmt.Printf("disp:          %v\n", i.disp)
+	fmt.Printf("imm:           %v\n", i.imm)
+	fmt.Printf("regIsExt:      %v\n", i.regIsExt)
+	fmt.Printf("regOnly:       %v\n", i.regOnly)
+	fmt.Printf("ext:           %v\n", i.ext)
+	fmt.Printf("category:      %v\n", i.category.String())
+	fmt.Println("────────────────────────────")
 }
