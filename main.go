@@ -65,37 +65,44 @@ func main() {
 	start := time.Now()
 	for i < len(binary) {
 		inst, i, err = parseInstruction(i, binary)
+		if err != nil {
+			fmt.Println(cRed("parseInstruction fail: "), err)
+		}
 		instructions = append(instructions, *inst)
 	}
+	cpu := sim.CPUContext{}
 
 	if args.showBinary {
-		fmt.Println("Binary input: ")
-		for i := range binary {
-			fmt.Printf("%08b ", binary[i])
-			if i % 4 == 3 {
-				fmt.Println()
-			}
-		}
-		fmt.Println("\n_________________________")
+		printBinary(binary)
 	}
-
-	cpu := sim.CPUContext{}
+	if args.poisonRegisters {
+		poisonRegisters(&cpu)
+	}
+	if args.poisonMemory {
+		poisonMemory(&cpu)
+	}
 
 	fmt.Print("bits 16\n\n")
 	for _, inst := range instructions {
+
+		preFlags := cpu.Flags.String()
+
 		s := inst.renderAsASM86()
 		fmt.Println(s)
 		inst.ExecInstruction(&cpu)
+		fmt.Printf("Flags:[%s]->[%s]\n", preFlags, cpu.Flags.String())
+
 		fmt.Println(cpu.String())
-		//if args.showBinary {
-		//	fmt.Printf(inst.BinaryString())
-		//}
+		if args.showBinary {
+			fmt.Printf(inst.BinaryString())
+		}
 		if args.showStruct {
 			inst.printStruct()
 		}
 	}
+	fmt.Println(cpu.InspectMemory(0, 512, 16, 69))
 
-	if args.verbose {
+	if args.stats {
 		totalTime := time.Since(start)
 		fmt.Println("----------------------------------")
 		fmt.Printf("Bytes Processed:\t%d\n", len(binary))
@@ -118,7 +125,6 @@ func (i *Instruction) renderAsASM86() string {
 		size,
 		mnemonic string
 	)
-
 	if i.category == CONTROL_TRANSFER {
 		offset := int8(i.disp.Value)
 		mnemonic, ok := Jxxx_STRING_MAP[i.opCode]
@@ -127,7 +133,6 @@ func (i *Instruction) renderAsASM86() string {
 		}
 		return "!Unknown Control Transfer Instruction!"
 	}
-
 	if i.regIsExt {
 		mnemonic = i.StringWithExt()
 		reg = ""
@@ -137,7 +142,6 @@ func (i *Instruction) renderAsASM86() string {
 	}
 	rm = i.RegMemString()
 	size = ""
-
 	// ──────────────
 	// Has Immediate
 	// ──────────────
@@ -157,7 +161,6 @@ func (i *Instruction) renderAsASM86() string {
 		}
 		goto out
 	}
-
 	// ──────────────
 	// No Immediate
 	// ──────────────
@@ -168,7 +171,6 @@ func (i *Instruction) renderAsASM86() string {
 		dest = rm
 		src = reg
 	}
-
 	out:
 	return fmt.Sprintf("%s %s%s, %s", mnemonic, size, dest, src)
 }
@@ -221,21 +223,30 @@ func (i *Instruction) RegMemString() string {
 
 
 var args struct {
-	verbose    bool
-	showBinary bool
-	showStruct bool
+	stats,
+	showBinary,
+	showStruct,
+	poisonRegisters,
+	poisonMemory bool
 }
 
 func getArgs() {
 	if len(os.Args) > 2 {
 		for i := 2; i < len(os.Args); i++ {
 			switch os.Args[i] {
-			case "-v":
-				args.verbose = true
+			case "--stats":
+				args.stats = true
 			case "--show-binary":
 				args.showBinary = true
 			case "--show-struct":
 				args.showStruct = true
+			case "-pm":
+				args.poisonMemory = true
+			case "-pr":
+				args.poisonRegisters = true
+			case "-prm", "-pmr":
+				args.poisonMemory = true
+				args.poisonRegisters = true
 			}
 		}
 	}
@@ -250,7 +261,6 @@ func Bool2Str(b bool) string {
 }
 
 func (i *Instruction) printStruct() {
-	fmt.Println("────────────────────────────")
 	fmt.Printf("opCode:        %08b\n", i.opCode)
 	fmt.Printf("Mnemonic:      %v\n", i.StringNoExt())
 	fmt.Printf("   (ext):      %v\n", i.StringWithExt())
@@ -267,8 +277,21 @@ func (i *Instruction) printStruct() {
 	fmt.Printf("disp:          %v\n", i.disp)
 	fmt.Printf("imm:           %v\n", i.imm)
 	fmt.Printf("regIsExt:      %v\n", i.regIsExt)
-	fmt.Printf("regOnly:       %v\n", i.regOnly)
 	fmt.Printf("ext:           %v\n", i.ext)
 	fmt.Printf("category:      %v\n", i.category.String())
-	fmt.Println("────────────────────────────")
+
+	fmt.Println("  --- IntRep ---  ")
+	fmt.Printf("src:           %v\n", i.src)
+	fmt.Printf("dest:          %v\n", i.dest)
+}
+
+func printBinary(binary []byte) {
+	fmt.Println("Binary input: ")
+	for i := range binary {
+		fmt.Printf("%08b ", binary[i])
+		if i % 4 == 3 {
+			fmt.Println()
+		}
+	}
+	fmt.Println("\n_________________________")
 }
