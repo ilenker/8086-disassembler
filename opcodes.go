@@ -25,6 +25,10 @@ const (
 	OP_MOV_M_TF_Ax   OpCode = 0b1010_0000
     MASK_MOV_M_TF_Ax OpCode = 0b1111_1100
 
+	// MOV r/m <-> sr  [1000 11d0] [mod 0sr rm] [disp lo] [disp hi]
+	OP_MOV_SR   OpCode = 0b1000_1100
+    MASK_MOV_SR OpCode = 0b1111_1101
+
 	//────────────────────────────────────
 	// ALU "Subgroup": [00][ext][IsImmediate][W]
 	//────────────────────────────────────
@@ -56,11 +60,11 @@ func (i *Instruction) StringNoExt() string {
 		return "mov"
 	case OP_SUBGROUP_ALU:
 		switch ALUFunction(i.ext) {
-		case add:
+		case EXT_ADD:
 			return "add"
-		case sub:
+		case EXT_SUB:
 			return "sub"
-		case cmp:
+		case EXT_CMP:
 			return "cmp"
 		}
 	}
@@ -74,6 +78,7 @@ func (i *Instruction) StringWithExt() string {
 		if i.reg_ext == EXT_MOV_IRM {
 		return "mov"
 		}
+		return "!Unknown OpCode!"
 	case OP_GROUP_1:
 		switch ALUFunction(i.reg_ext) {
 		case EXT_ADD:
@@ -83,6 +88,7 @@ func (i *Instruction) StringWithExt() string {
 		case EXT_CMP:
 			return "cmp"
 		}
+		return "!Unknown OpCode!"
 	}
 	return "!Unknown OpCode!"
 }
