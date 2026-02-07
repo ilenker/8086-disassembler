@@ -3,28 +3,17 @@ package sim
 import (
 	"fmt"
 	"strings"
+	"bytes"
 )
 
-type CPUContext struct {
+const MEMORY_SIZE = 1<<20
+
+type CPUContext struct{
 	Registers [8]uint16
-	Memory    [1<<20]byte
+	Memory    [MEMORY_SIZE]byte
+	Flags	  Flags
 }
 
-type ArgType uint8
-const (
-	ArgNone ArgType = iota
-	ArgReg       // cpu.registers[abcd sp bp si di...]
-	ArgMem       // cpu.memory[...]
-	ArgImm       // Literal
-)
-func (a ArgType) String() string {
-    return [...]string{
-	"ArgNone",
-	"ArgReg",
-	"ArgMem",
-	"ArgImm",
-	}[a]
-}
 
 type Argument struct{
 	Type     ArgType
@@ -45,102 +34,179 @@ type Argument struct{
 	ImmValue int16
 }
 
-type RegName int8
-const (
-	AX RegName = iota 
-	CX
-	DX
-	BX
-	SP // Stack pointer
-	BP // Base pointer
-	SI // Source index
-	DI // Destination index
-)
-const NilX RegName = -1
-
-type RegSubset int8
-const (
-	SubsetX RegSubset = iota
-	SubsetLo
-	SubsetHi
-)
-func (r RegSubset) String() string {
-	switch r {
-	case SubsetX:
-	return "(x)"
-	case SubsetLo:
-	return "(l)"
-	case SubsetHi:
-	return "(h)"
-	default:
-	return "?"
+func (cpu *CPUContext) GetEffectiveAddress(arg *Argument) int {
+	var baseVal, indexVal, dispVal int
+	base  := arg.Mem.BaseReg
+	index := arg.Mem.IndexReg
+	
+	if base == -1 {
+		baseVal = 0
+	} else {
+		baseVal  = int(cpu.Registers[base])
 	}
+	if index == -1 {
+		indexVal = 0
+	} else {
+		indexVal = int(cpu.Registers[index])
+	}
+	dispVal  = int(arg.Mem.Disp)
+	return int(uint16(baseVal + indexVal + dispVal))
 }
 
-func (r RegName) String() string {
-	if r == -1 {
-		return "[no reg]"
-	}
-	return [...]string{
-		"a",
-		"c",
-		"d",
-		"b",
-		"sp",
-		"bp",
-		"si",
-		"di",
-	}[r]
-}
+const (
+	maskLo uint16 = 0x00ff
+	maskHi uint16 = 0xff00
+)
 
-func (arg Argument) String() string {
-	str := strings.Builder{}
+func (cpu *CPUContext) ValueOf(arg *Argument, wide bool) int16 {
 	switch arg.Type {
-	case ArgNone:
-		str.WriteString("none")
-
-	case ArgReg:
-		str.WriteString("Register: ")
-		str.WriteString(arg.Reg.Name.String())
-		str.WriteString(arg.Reg.Subset.String())
-
-	case ArgMem:
-		str.WriteString("Memory: ")
-		str.WriteString("Base(")
-		str.WriteString(arg.Mem.BaseReg.String())
-		str.WriteString(") Index(")
-		str.WriteString(arg.Mem.IndexReg.String())
-		str.WriteString(") Disp(")
-		str.WriteString(fmt.Sprintf("%d)", arg.Mem.Disp))
-
 	case ArgImm:
-		str.WriteString("Immediate: ")
-		str.WriteString(fmt.Sprintf("%d", arg.ImmValue))
-
+		return arg.ImmValue
+	case ArgReg:
+		switch arg.Reg.Subset {
+		case SubsetX:
+			return int16(cpu.Registers[arg.Reg.Name])
+		case SubsetLo:
+			return int16(cpu.Registers[arg.Reg.Name] & maskLo)
+		case SubsetHi:
+			return int16(cpu.Registers[arg.Reg.Name]>>8)
+		}
+	case ArgMem:
+		addr := cpu.GetEffectiveAddress(arg)
+		if wide {
+			byteLo := int16(cpu.Memory[addr])
+			byteHi := int16(cpu.Memory[addr+1]) << 8
+			return byteLo | byteHi
+		}
+		return int16(int8(cpu.Memory[addr]))
+	// TODO(Johan): how to handle "nil"
+	case ArgNone:
+		return 0
 	}
-	return str.String()
+	return 0
 }
 
-func (cpu *CPUContext) GetEffectiveAddress(arg Argument) uint16 {
-	base  := int16(cpu.Registers[arg.Mem.BaseReg])
-	index := int16(cpu.Registers[arg.Mem.IndexReg])
-	disp  := arg.Mem.Disp
-	return uint16(base + index + disp)
+func (cpu *CPUContext) WriteNoFlags(dest *Argument, val int16, wide bool) {
+	switch dest.Type {
+	case ArgMem:
+		if wide {
+			cpu.WriteMemWide(cpu.GetEffectiveAddress(dest), val)
+		} else {
+			cpu.WriteMemByte(cpu.GetEffectiveAddress(dest), val)
+		}
+	case ArgReg:
+		cpu.WriteReg(dest, val)
+	}
 }
 
-func (cpu *CPUContext) String() string {
+func (cpu *CPUContext) WriteWithFlags(dest *Argument, val int16, wide bool) {
+	cpu.UpdateFlags(val)
+	switch dest.Type {
+	case ArgMem:
+		if wide {
+			cpu.WriteMemWide(cpu.GetEffectiveAddress(dest), val)
+			return
+		}
+		cpu.WriteMemByte(cpu.GetEffectiveAddress(dest), val)
+	case ArgReg:
+		cpu.WriteReg(dest, val)
+	}
+}
 
+func (cpu *CPUContext) UpdateFlags(val int16) {
+	switch {
+	case val == 0:
+		cpu.Flags &= ^FlagSign
+		cpu.Flags |= FlagZero
+	case val < 0:
+		cpu.Flags |= FlagSign
+		cpu.Flags &= ^FlagZero
+	case val > 0:
+		cpu.Flags &= ^FlagSign
+		cpu.Flags &= ^FlagZero
+	}
+}
+
+
+func (cpu *CPUContext) WriteMem(addr int, val int16, wide bool) {
+	if wide {
+		cpu.WriteMemWide(addr, val)
+		return
+	}
+	cpu.WriteMemByte(addr, val)
+}
+
+func (cpu *CPUContext) WriteMemWide(addr int, val int16) {
+	// TODO(Johan): check bounds
+	cpu.Memory[addr]   = byte(val & int16(maskLo))
+	cpu.Memory[addr+1] = byte(val>>8)
+}
+
+func (cpu *CPUContext) WriteMemByte(addr int, val int16) {
+	// TODO(Johan): check bounds
+	cpu.Memory[addr] = byte(val)
+}
+
+func (cpu *CPUContext) WriteReg(dest *Argument, val int16) {
+	switch dest.Reg.Subset {
+	case SubsetX:
+		cpu.Registers[dest.Reg.Name] = uint16(val)
+	case SubsetLo:
+		cpu.WriteRegLo(dest.Reg.Name, val)
+	case SubsetHi:
+		cpu.WriteRegHi(dest.Reg.Name, val)
+	}
+}
+
+func (cpu *CPUContext) WriteRegLo(reg RegName, val int16) {
+	regPrev := cpu.Registers[reg]
+	cpu.Registers[reg] = uint16((regPrev & maskHi) | uint16(uint8(val)))
+}
+
+func (cpu *CPUContext) WriteRegHi(reg RegName, val int16) {
+	regPrev := cpu.Registers[reg]
+	cpu.Registers[reg] = uint16((regPrev & maskLo) |
+		uint16(val<<8))
+	/*
+	val := 0x1234
+	Ax[0xffaa]
+	   0xffaa &
+	   0x00ff =
+	   0x00aa |
+	  (0x0034
+	      <<8 =
+	   0x3400)
+	   0x34aa
+	*/
+}
+
+func (cpu *CPUContext) InspectMemory(start, nBytes, bytesPerRow int, hiliteAddr int) string {
+	if start >= MEMORY_SIZE || start < 0 {
+		return "Inspect Memory: out of bounds"
+	}
+	if start+nBytes > MEMORY_SIZE {
+		nBytes = MEMORY_SIZE-start
+	}
 	str := strings.Builder{}
+	buf := bytes.Buffer{}
+	buf.Grow(64)
+	i := 0
+	for {
+		fmt.Fprintf(&str, "\x1b[35m%#04x:\x1b[39m", start+i)
 
-	str.WriteString(fmt.Sprintf("A(%5d): %#x, %#x\n", cpu.Registers[AX], cpu.Registers[AX]>>8, byte(cpu.Registers[AX])))
-	str.WriteString(fmt.Sprintf("C(%5d): %#x, %#x\n", cpu.Registers[CX], cpu.Registers[CX]>>8, byte(cpu.Registers[CX])))
-	str.WriteString(fmt.Sprintf("D(%5d): %#x, %#x\n", cpu.Registers[DX], cpu.Registers[DX]>>8, byte(cpu.Registers[DX])))
-	str.WriteString(fmt.Sprintf("B(%5d): %#x, %#x\n", cpu.Registers[BX], cpu.Registers[BX]>>8, byte(cpu.Registers[BX])))
-
-	str.WriteString(fmt.Sprintf("SP(%5d)\n", cpu.Registers[SP]))
-	str.WriteString(fmt.Sprintf("BP(%5d)\n", cpu.Registers[BP]))
-	str.WriteString(fmt.Sprintf("SI(%5d)\n", cpu.Registers[SI]))
-	str.WriteString(fmt.Sprintf("DI(%5d)\n", cpu.Registers[DI]))
-
-	return str.String()
+		for range bytesPerRow {
+			if start+i == hiliteAddr {
+				fmt.Fprintf(&str, " \x1b[32m%#02x\x1b[39m", cpu.Memory[start+i])
+			} else {
+				fmt.Fprintf(&str, " %#02x", cpu.Memory[start+i])
+			}
+			i++
+			nBytes--
+			if nBytes <= 0 {
+				str.WriteRune('\n')
+				return str.String()
+			}
+		}
+		str.WriteRune('\n')
+	}
 }
