@@ -31,6 +31,7 @@ type Instruction struct {
 	regIsExt bool
 	ext      byte
 	category Category
+	srOp	 bool
 
 	// "intermediate representation" 
 	dest sim.Argument
@@ -140,7 +141,8 @@ func parseInstruction(idx int, binary []byte, ) (*Instruction, int, error) {
 			inst.regIsExt = true
 		} else {
 			// TODO(Johan): What to do on unlikely event of these bits not being 000?
-			panic("unknown opcode")
+			fmt.Println(inst.BinaryString())
+			panic(cRed("unknown opcode:"))
 		}
 		idx += getDisplacement(idx, binary, inst)
 		idx += getImmediate(idx, binary, inst)
@@ -165,6 +167,19 @@ func parseInstruction(idx int, binary []byte, ) (*Instruction, int, error) {
 
 		return inst, idx, nil
 
+	// MOV r/m <-> sr (segment register)
+	// [1000 11d0] [mod 0sr rm] [disp lo] [disp hi]
+	case OpCode(b)&MASK_MOV_SR == OP_MOV_SR:
+		inst.opCode = OP_MOV_SR
+		inst.sbfs.D = BitIsSet(b, D_MASK)
+		idx++
+		idx += getModRegExtRM(idx, binary, inst)
+		idx += getDisplacement(idx, binary, inst)
+		inst.regIsExt = false
+		inst.category = DATA_TRANSFER
+		inst.srOp = true
+
+		return inst, idx, nil
 
 	//────────────────────────────────────
 	//     100000SW ADD / SUB / CMP
@@ -200,7 +215,7 @@ func parseInstruction(idx int, binary []byte, ) (*Instruction, int, error) {
 		// because it's not an extension per say, but I'm treating
 		// it like one. Main Group [00] -> extended -> [00 000] = ADD
 		inst.opCode = OP_SUBGROUP_ALU
-		inst.ext = b&REG_OR_EXT_MASK
+		inst.ext = (b&REG_OR_EXT_MASK)>>3
 		inst.sbfs.W = BitIsSet(b, W_MASK_DEFAULT)
 		if b&OP_ALU_IsToAx != 0 {
 			idx++
