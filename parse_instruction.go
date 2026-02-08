@@ -458,7 +458,7 @@ func getImmediate(idx int, binary []byte, inst *Instruction) (int) {
 		val := binary[idx]
 		var valExtended int16
 		if (val & BIT_7) != 0 {
-			valExtended = int16(val | 0b11111111)
+			valExtended = int16(uint16(val) | 0b11111111_00000000)
 		} else {
 			valExtended = int16(int8(val))
 		}
