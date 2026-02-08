@@ -100,7 +100,7 @@ func (cpu *CPUContext) WriteNoFlags(dest *Argument, val int16, wide bool) {
 }
 
 func (cpu *CPUContext) WriteWithFlags(dest *Argument, val int16, wide bool) {
-	cpu.UpdateFlags(val)
+	cpu.UpdateSZFlags(val)
 	switch dest.Type {
 	case ArgMem:
 		if wide {
@@ -113,7 +113,7 @@ func (cpu *CPUContext) WriteWithFlags(dest *Argument, val int16, wide bool) {
 	}
 }
 
-func (cpu *CPUContext) UpdateFlags(val int16) {
+func (cpu *CPUContext) UpdateSZFlags(val int16) {
 	switch {
 	case val == 0:
 		cpu.Flags &= ^FlagSign
@@ -125,6 +125,55 @@ func (cpu *CPUContext) UpdateFlags(val int16) {
 		cpu.Flags &= ^FlagSign
 		cpu.Flags &= ^FlagZero
 	}
+}
+
+func (cpu *CPUContext) UpdateCFlag(result uint, w bool) {
+	limit := uint(0xff)
+	if w {
+		limit = 0xffff
+	}
+	if result > limit {
+		cpu.Flags |= FlagCarry
+		return
+	}
+	cpu.Flags &= ^FlagCarry
+}
+
+func (cpu *CPUContext) UpdateCOFlags(lhs, rhs int16, w, isAdd bool) {
+	if isAdd {
+		cpu.UpdateCFlag(uint(uint16(lhs))+uint(uint16(rhs)), w)
+	} else {
+		cpu.UpdateCFlag(uint(uint16(lhs))-uint(uint16(rhs)), w)
+	}
+
+	if isAdd {
+		result := lhs + rhs
+		// pos + pos = neg
+		if (lhs>0 && rhs>0) && result < 0 {
+			cpu.Flags |= FlagOverflow
+			return
+		}
+		// neg + neg = pos
+		if (lhs<0 && rhs<0) && result > 0 {
+			cpu.Flags |= FlagOverflow
+			return
+		}
+		cpu.Flags &= ^FlagOverflow
+		return
+	}
+	// Sub
+	result := lhs - rhs
+	// pos - neg = neg
+	if (lhs>0 && rhs<0) && result < 0 {
+		cpu.Flags |= FlagOverflow
+		return
+	}
+	// neg - pos = pos
+	if (lhs<0 && rhs>0) && result > 0 {
+		cpu.Flags |= FlagOverflow
+		return
+	}
+	cpu.Flags &= ^FlagOverflow
 }
 
 

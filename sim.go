@@ -17,15 +17,18 @@ func (inst *Instruction) ExecInstruction(cpu *sim.CPUContext) {
 		cpu.WriteNoFlags(&dest, val, w)
 
 	case ARITHMETIC:
-		rhs := cpu.ValueOf(&src, w)
 		lhs := cpu.ValueOf(&dest, w)
+		rhs := cpu.ValueOf(&src, w)
+
 		switch ALUFunction(inst.ext) {
 		case EXT_ADD:
-			cpu.WriteWithFlags(&dest, int16(lhs+rhs), w)
+			cpu.UpdateCOFlags(lhs, rhs, w, true)
+			cpu.WriteWithFlags(&dest, lhs+rhs, w)
 		case EXT_SUB:
-			cpu.WriteWithFlags(&dest, int16(lhs-rhs), w)
+			cpu.UpdateCOFlags(lhs, rhs, w, false)
+			cpu.WriteWithFlags(&dest, lhs-rhs, w)
 		case EXT_CMP:
-			cpu.UpdateFlags(int16(lhs-rhs))
+			cpu.UpdateSZFlags(lhs-rhs)
 		}
 	}
 }
