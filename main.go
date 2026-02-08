@@ -62,7 +62,6 @@ func main() {
 	i := 0
 	var inst *Instruction
 	var instructions = make([]Instruction, 0, 32)
-	start := time.Now()
 	for i < len(binary) {
 		inst, i, err = parseInstruction(i, binary)
 		if err != nil {
@@ -82,17 +81,19 @@ func main() {
 		poisonMemory(&cpu)
 	}
 
+	start := time.Now()
 	fmt.Print("bits 16\n\n")
 	for _, inst := range instructions {
 
 		preFlags := cpu.Flags.String()
 
-		s := inst.renderAsASM86()
-		fmt.Println(s)
+		line := inst.renderAsASM86()
+		fmt.Println(line)
 		inst.ExecInstruction(&cpu)
-		fmt.Printf("Flags:[%s]->[%s]\n", preFlags, cpu.Flags.String())
-
-		fmt.Println(cpu.String())
+		if args.showCPU {
+			fmt.Printf("Flags:[%s]->[%s]\n", preFlags, cpu.Flags.String())
+			fmt.Println(cpu.String())
+		}
 		if args.showBinary {
 			fmt.Printf(inst.BinaryString())
 		}
@@ -100,7 +101,7 @@ func main() {
 			inst.printStruct()
 		}
 	}
-	fmt.Println(cpu.InspectMemory(0, 512, 16, 69))
+	//fmt.Println(cpu.InspectMemory(0, 512, 16, 69))
 
 	if args.stats {
 		totalTime := time.Since(start)
@@ -226,6 +227,7 @@ var args struct {
 	stats,
 	showBinary,
 	showStruct,
+	showCPU,
 	poisonRegisters,
 	poisonMemory bool
 }
@@ -236,10 +238,13 @@ func getArgs() {
 			switch os.Args[i] {
 			case "--stats":
 				args.stats = true
-			case "--show-binary":
+			case "--show-binary", "-bin":
 				args.showBinary = true
-			case "--show-struct":
+			case "--show-struct", "-struct":
 				args.showStruct = true
+			case "--show-cpu", "-reg":
+				args.showCPU = true
+
 			case "-pm":
 				args.poisonMemory = true
 			case "-pr":
