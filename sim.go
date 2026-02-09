@@ -30,7 +30,60 @@ func (inst *Instruction) ExecInstruction(cpu *sim.CPUContext) {
 		case EXT_CMP:
 			cpu.UpdateSZFlags(lhs-rhs)
 		}
+	case CONTROL_TRANSFER:
+		switch inst.opCode {
+		case OP_JNZ:
+			if cpu.Flags&sim.FlagZero == 0 {
+				nextIndex := cpu.IP + inst.size + int(src.ImmValue)
+				cpu.IP = nextIndex
+				return
+			}
+		case OP_JE:
+			if cpu.Flags&sim.FlagZero != 0 {
+				nextIndex := cpu.IP + inst.size + int(src.ImmValue)
+				cpu.IP = nextIndex
+				return
+			}
+		case OP_LOOP:
+			cx := sim.Argument{}
+			cx.Type = sim.ArgReg
+			cx.Reg.Name = sim.CX
+			cx.Reg.Subset = sim.SubsetX
+			imm := sim.Argument{}
+			imm.Type = sim.ArgImm
+			imm.ImmValue = 1
+			lhs := cpu.ValueOf(&cx, true)
+			rhs := cpu.ValueOf(&imm, true)
+			cpu.UpdateCOFlags(lhs, rhs, true, false)
+			cpu.UpdateSZFlags(lhs-rhs)
+			cpu.WriteWithFlags(&cx, lhs-rhs, true)
+			if cpu.Flags&sim.FlagZero == 0 {
+				nextIndex := cpu.IP + inst.size + int(src.ImmValue)
+				cpu.IP = nextIndex
+				return
+			}
+
+		}
 	}
+	cpu.IP = inst.binIndex + inst.size
+}
+
+func SeekNextInstructionIndex(cpu *sim.CPUContext, currentIdx int, insts []Instruction) int {
+	if insts[currentIdx].binIndex == cpu.IP {
+		return currentIdx
+	}
+
+	if insts[currentIdx].binIndex > cpu.IP {
+		for cpu.IP != insts[currentIdx].binIndex {
+			currentIdx--
+		}
+		return currentIdx
+	}
+
+	for currentIdx < len(insts) && cpu.IP != insts[currentIdx].binIndex {
+		currentIdx++
+	}
+	return currentIdx
 }
 
 const (

@@ -4,6 +4,7 @@ import (
 	"os"
 	"fmt"
 	"time"
+	"strconv"
 	"github.com/ilenker/8086-disassembler/internal/sim"
 )
 
@@ -14,7 +15,7 @@ Example 8086 instruction anatomy
  MOV [Reg/Mem] [To/From] Reg 
  10001001 11011001            [DISP-LO] [DISP-HI]
           ||├─┘└─┴───001
- 10001001 11└---011  R/M
+ 10001001 11└───011  R/M
  OP----DW MODE  REG         
 
 ────────────────────────────────
@@ -23,93 +24,64 @@ Example 8086 instruction anatomy
 ────────────────────────────────
 */
 
-const (
-	UNCATEGORIZED Category = iota
-	DATA_TRANSFER
-	ARITHMETIC
-	LOGIC
-	STRING_MANIPULATION
-	CONTROL_TRANSFER
-	PROCESSOR_CONTROL
-)
-
-func (c Category) String() string {
-    return [...]string{
-		"UNCATEGORIZED",
-		"DATA_TRANSFER",
-		"ARITHMETIC",
-		"LOGIC",
-		"STRING_MANIPULATION",
-		"CONTROL_TRANSFER",
-		"PROCESSOR_CONTROL",
-	}[c]
-}
-
+var debug = false
 func main() {
-	if len(os.Args) < 2 {
-		fmt.Println("provide binary path: <path/to/binary>")
-		return
-	}
-
-	binary, err := os.ReadFile(os.Args[1])
-	if err != nil {
-		fmt.Printf("Failed to read file: %s\n", os.Args[0])
-		return
-	}
-
-	getArgs()
-
-	i := 0
-	var inst *Instruction
-	var instructions = make([]Instruction, 0, 32)
-	for i < len(binary) {
-		inst, i, err = parseInstruction(i, binary)
+	var binary []byte
+	var err error
+	if !debug {
+		if len(os.Args) < 2 {
+			fmt.Println("provide binary path: <path/to/binary>")
+			return
+		} 
+		binary, err = os.ReadFile(os.Args[1])
 		if err != nil {
-			fmt.Println(cRed("parseInstruction fail: "), err)
+			fmt.Println("Failed to read file: ", os.Args[0])
+			return
 		}
-		instructions = append(instructions, *inst)
+	} else {
+		binary, err = os.ReadFile("temp")
+		if err != nil {
+			fmt.Print("Failed to read temp file")
+			return
+		}
 	}
+
 	cpu := sim.CPUContext{}
-
-	if args.showBinary {
-		printBinary(binary)
+	ctx := CTX{
+		args: Args{},
+		cpu: &cpu,
+		binary: binary,
 	}
-	if args.poisonRegisters {
-		poisonRegisters(&cpu)
-	}
-	if args.poisonMemory {
-		poisonMemory(&cpu)
-	}
+	ctx.args.getArgs()
+	copy(cpu.Memory[:], binary)
 
-	start := time.Now()
-	fmt.Print("bits 16\n\n")
-	for _, inst := range instructions {
+	ctx.doPreArgs()
+	ctx.timerStart = time.Now()
 
-		preFlags := cpu.Flags.String()
-
-		line := inst.renderAsASM86()
-		fmt.Println(line)
-		inst.ExecInstruction(&cpu)
-		if args.showCPU {
-			fmt.Printf("Flags:[%s]->[%s]\n", preFlags, cpu.Flags.String())
-			fmt.Println(cpu.String())
+	if ctx.args.exec {
+		for cpu.IP < len(binary) {
+			ctx.inst, _, _ = parseInstruction(cpu.IP, cpu.Memory[:])
+			line := ctx.inst.renderAsASM86()
+			fmt.Println(line)
+			ctx.inst.ExecInstruction(&cpu)
+			ctx.doArgs()
+			ctx.cycles++
 		}
-		if args.showBinary {
-			fmt.Printf(inst.BinaryString())
-		}
-		if args.showStruct {
-			inst.printStruct()
+	} else {
+		inst := &Instruction{}
+		i := 0
+		for i < len(binary) {
+			inst, i, err = parseInstruction(i, binary)
+			if err != nil {
+				fmt.Println(cRed("parseInstruction fail: "), err)
+			}
+			fmt.Println(inst.renderAsASM86())
 		}
 	}
-	//fmt.Println(cpu.InspectMemory(0, 512, 16, 69))
 
-	if args.stats {
-		totalTime := time.Since(start)
-		fmt.Println("----------------------------------")
-		fmt.Printf("Bytes Processed:\t%d\n", len(binary))
-		fmt.Printf("Instruction Count:\t%d\n", len(instructions))
-		fmt.Printf("Total Time:\t\t%v\n", totalTime)
-		fmt.Printf("Time per instruction:\t%v\n", totalTime/time.Duration(len(instructions)))
+	ctx.doPostArgs()
+	if ctx.args.dump {
+		os.WriteFile("8086_memory.data", cpu.Memory[:], 0644)
 	}
 }
 
@@ -211,7 +183,6 @@ func (i *Instruction) RegMemString() string {
 		return rmString + "]"
 	case MemMode_8, MemMode_16:
 		if disp.Value == 0 {
-			// TODO(Johan): Unsure if "+ 0" should be included
 			return rmString + " + 0]"
 		}
 		if disp.Value > 0 {
@@ -223,16 +194,27 @@ func (i *Instruction) RegMemString() string {
 }
 
 
-var args struct {
+type Args struct {
+	showMem struct{
+		enabled 	bool
+		start       int
+		nBytes      int
+		bytesPerRow int
+	}
+	exec,
+	dump,
 	stats,
+	showCPU,
 	showBinary,
 	showStruct,
-	showCPU,
-	poisonRegisters,
-	poisonMemory bool
+	poisonMemory,
+	poisonRegisters bool
 }
 
-func getArgs() {
+func (args *Args) getArgs() {
+	// Defaults
+	args.showMem.nBytes = 32
+	args.showMem.bytesPerRow = 8
 	if len(os.Args) > 2 {
 		for i := 2; i < len(os.Args); i++ {
 			switch os.Args[i] {
@@ -244,6 +226,17 @@ func getArgs() {
 				args.showStruct = true
 			case "--show-cpu", "-reg":
 				args.showCPU = true
+			case "--show-mem", "-mem":
+				if i+1 < len(os.Args) {
+					args.showMem.enabled = true
+					args.showMem.start, _ = strconv.Atoi(os.Args[i+1])
+					if i+2 < len(os.Args) {
+						args.showMem.nBytes, _ = strconv.Atoi(os.Args[i+2])
+						if i+3 < len(os.Args) {
+							args.showMem.bytesPerRow, _ = strconv.Atoi(os.Args[i+3])
+						}
+					}
+				}
 
 			case "-pm":
 				args.poisonMemory = true
@@ -252,51 +245,64 @@ func getArgs() {
 			case "-prm", "-pmr":
 				args.poisonMemory = true
 				args.poisonRegisters = true
+			case "-exec":
+				args.exec = true
+
 			}
 		}
 	}
 }
 
-func Bool2Str(b bool) string {
-    if b {
-        return "1"
-    } else {
-        return "_"
-    }
+type CTX struct {
+	binary     []byte
+	args       Args
+	cpu        *sim.CPUContext
+	inst       *Instruction
+	timerStart time.Time
+	cycles     int
 }
 
-func (i *Instruction) printStruct() {
-	fmt.Printf("opCode:        %08b\n", i.opCode)
-	fmt.Printf("Mnemonic:      %v\n", i.StringNoExt())
-	fmt.Printf("   (ext):      %v\n", i.StringWithExt())
-	fmt.Printf("sbfs:          S:%s W:%s D:%s V:%s Z:%s\n",
-		Bool2Str(i.sbfs.S),
-		Bool2Str(i.sbfs.W),
-		Bool2Str(i.sbfs.D),
-		Bool2Str(i.sbfs.V),
-		Bool2Str(i.sbfs.Z),
-		)
-	fmt.Printf("mode:          %v\n", i.mode)
-	fmt.Printf("reg_ext:       %03b\n", i.reg_ext)
-	fmt.Printf("reg_mem:       %03b\n", i.reg_mem)
-	fmt.Printf("disp:          %v\n", i.disp)
-	fmt.Printf("imm:           %v\n", i.imm)
-	fmt.Printf("regIsExt:      %v\n", i.regIsExt)
-	fmt.Printf("ext:           %v\n", i.ext)
-	fmt.Printf("category:      %v\n", i.category.String())
-
-	fmt.Println("  --- IntRep ---  ")
-	fmt.Printf("src:           %v\n", i.src)
-	fmt.Printf("dest:          %v\n", i.dest)
+func (ctx *CTX) doPreArgs() {
+	if ctx.args.showBinary {
+		printBinary(ctx.binary)
+	}
+	if ctx.args.poisonRegisters {
+		poisonRegisters(ctx.cpu)
+	}
+	if ctx.args.poisonMemory {
+		poisonMemory(ctx.cpu)
+	}
 }
 
-func printBinary(binary []byte) {
-	fmt.Println("Binary input: ")
-	for i := range binary {
-		fmt.Printf("%08b ", binary[i])
-		if i % 4 == 3 {
-			fmt.Println()
+func (ctx *CTX) doArgs() {
+	if ctx.args.showCPU {
+		fmt.Printf("Flags:[%s]\n", ctx.cpu.Flags.String())
+		fmt.Println(ctx.cpu.String())
+	}
+	if ctx.args.showBinary {
+		fmt.Printf(ctx.inst.BinaryString())
+	}
+	if ctx.args.showStruct {
+		ctx.inst.printStruct()
+	}
+}
+
+func (ctx *CTX) doPostArgs() {
+	if ctx.args.stats {
+		totalTime := time.Since(ctx.timerStart)
+		fmt.Println("----------------------------------")
+		fmt.Printf("Bytes Processed:\t%d\n", len(ctx.binary))
+		fmt.Printf("Cycle Count:\t%d\n", ctx.cycles)
+		fmt.Printf("Total Time:\t\t%v\n", totalTime)
+		if ctx.cycles > 0 {
+			fmt.Printf("Time per instruction:\t%v\n", totalTime/time.Duration(ctx.cycles))
 		}
 	}
-	fmt.Println("\n_________________________")
+	if ctx.args.showMem.enabled {
+		fmt.Println(ctx.cpu.InspectMemory(
+			ctx.args.showMem.start,
+			ctx.args.showMem.nBytes,
+			ctx.args.showMem.bytesPerRow,
+			ctx.args.showMem.start))
+	}
 }
