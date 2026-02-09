@@ -23,9 +23,9 @@ Example 8086 instruction anatomy
  [1011 w reg] [data] [data if w]
 ────────────────────────────────
 */
-
 var debug = false
 func main() {
+
 	var binary []byte
 	var err error
 	if !debug {
@@ -46,26 +46,49 @@ func main() {
 		}
 	}
 
+
 	cpu := sim.CPUContext{}
 	ctx := CTX{
-		args: Args{},
-		cpu: &cpu,
+		args:   Args{},
+		cpu:    &cpu,
 		binary: binary,
+		spd:    time.Millisecond,
+		stepCh: make(chan any),
 	}
-	ctx.args.getArgs()
+	ctx.setup()
 	copy(cpu.Memory[:], binary)
 
 	ctx.doPreArgs()
 	ctx.timerStart = time.Now()
 
+	if ctx.args.tui {
+		go func() {
+			t := time.NewTicker(time.Second/30)
+			for {
+				<-t.C
+				ctx.drawMemoryRegionRGBA(256, 64, 4, 64, 64)
+				ctx.drawCPU()
+				scr.Show()
+				if !ctx.getInput() {
+					tcEnd()
+					os.Exit(0)
+				}
+			}
+		}()
+	}
+
 	if ctx.args.exec {
+		ctx.t = time.NewTicker(time.Nanosecond*ctx.spd)
 		for cpu.IP < len(binary) {
 			ctx.inst, _, _ = parseInstruction(cpu.IP, cpu.Memory[:])
-			line := ctx.inst.renderAsASM86()
-			fmt.Println(line)
+			ctx.drawASMLine()
 			ctx.inst.ExecInstruction(&cpu)
 			ctx.doArgs()
 			ctx.cycles++
+			select {
+			case <-ctx.t.C:
+			case <-ctx.stepCh:
+			}
 		}
 	} else {
 		inst := &Instruction{}
@@ -79,10 +102,11 @@ func main() {
 		}
 	}
 
-	ctx.doPostArgs()
+	//ctx.doPostArgs()
 	if ctx.args.dump {
 		os.WriteFile("8086_memory.data", cpu.Memory[:], 0644)
 	}
+	for{time.Sleep(time.Millisecond*10)}
 }
 
 func (i *Instruction) renderAsASM86() string {
@@ -201,6 +225,7 @@ type Args struct {
 		nBytes      int
 		bytesPerRow int
 	}
+	tui,
 	exec,
 	dump,
 	stats,
@@ -218,7 +243,9 @@ func (args *Args) getArgs() {
 	if len(os.Args) > 2 {
 		for i := 2; i < len(os.Args); i++ {
 			switch os.Args[i] {
-			case "--stats":
+			case "-tui":
+				args.tui = true
+			case "-stats", "--stats":
 				args.stats = true
 			case "--show-binary", "-bin":
 				args.showBinary = true
@@ -260,11 +287,16 @@ type CTX struct {
 	inst       *Instruction
 	timerStart time.Time
 	cycles     int
+	spd		   time.Duration
+	t		   *time.Ticker
+	stepCh	   chan any
 }
 
 func (ctx *CTX) doPreArgs() {
 	if ctx.args.showBinary {
-		printBinary(ctx.binary)
+		if !ctx.args.tui{
+			printBinary(ctx.binary)
+		}
 	}
 	if ctx.args.poisonRegisters {
 		poisonRegisters(ctx.cpu)
@@ -275,19 +307,22 @@ func (ctx *CTX) doPreArgs() {
 }
 
 func (ctx *CTX) doArgs() {
+	return
 	if ctx.args.showCPU {
-		fmt.Printf("Flags:[%s]\n", ctx.cpu.Flags.String())
-		fmt.Println(ctx.cpu.String())
+		ctx.drawCPU()
 	}
 	if ctx.args.showBinary {
-		fmt.Printf(ctx.inst.BinaryString())
+		ctx.drawBinary()
 	}
 	if ctx.args.showStruct {
-		ctx.inst.printStruct()
+		ctx.drawStruct()
 	}
 }
 
 func (ctx *CTX) doPostArgs() {
+	if ctx.args.tui {
+		return
+	}
 	if ctx.args.stats {
 		totalTime := time.Since(ctx.timerStart)
 		fmt.Println("----------------------------------")

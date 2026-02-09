@@ -20,6 +20,9 @@ import (
 // Displacement (+0..2)
 // Immediates   (+0..2)
 
+var iCache = make(map[int]Instruction)
+var INST_COUNTER int
+
 // NOTE(Johan): Struct is currently in logical-order, not in efficiently-packed-order
 type Instruction struct {
 	opCode   OpCode
@@ -34,6 +37,7 @@ type Instruction struct {
 	category Category
 	srOp	 bool
 	binIndex int
+	srcIndex int
 	size	 int
 
 	// "intermediate representation" 
@@ -94,11 +98,18 @@ func (c Category) String() string {
 
 // Start: First Byte
 func parseInstruction(idx int, binary []byte, ) (*Instruction, int, error) {
+	if inst, ok := iCache[idx]; ok {
+		return &inst, 0, nil
+	} 
+
 	b := binary[idx]
 	inst := &Instruction{}
 	inst.binIndex = idx
 	defer func() {
+		inst.srcIndex = INST_COUNTER
+		INST_COUNTER++
 		inst.size = idx - inst.binIndex
+		iCache[inst.binIndex] = *inst
 	}()
 	inst.debug.byte1 = fmt.Sprintf("%08b", b)
 	// TODO(Johan): Handle NO-OP
