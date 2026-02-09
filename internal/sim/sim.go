@@ -12,6 +12,7 @@ type CPUContext struct{
 	Registers [8]uint16
 	Memory    [MEMORY_SIZE]byte
 	Flags	  Flags
+	IP	      int
 }
 
 
@@ -245,9 +246,13 @@ func (cpu *CPUContext) InspectMemory(start, nBytes, bytesPerRow int, hiliteAddr 
 
 		for range bytesPerRow {
 			if start+i == hiliteAddr {
-				fmt.Fprintf(&str, " \x1b[32m%#02x\x1b[39m", cpu.Memory[start+i])
+				fmt.Fprintf(&str, " \x1b[32m%02x\x1b[39m", cpu.Memory[start+i])
 			} else {
-				fmt.Fprintf(&str, " %#02x", cpu.Memory[start+i])
+				if cpu.Memory[start+i] == 0 {
+					fmt.Fprintf(&str, " \x1b[38;5;242m%02x\x1b[39m", cpu.Memory[start+i])
+				} else {
+					fmt.Fprintf(&str, " %02x", cpu.Memory[start+i])
+				} 
 			}
 			i++
 			nBytes--
@@ -259,3 +264,4 @@ func (cpu *CPUContext) InspectMemory(start, nBytes, bytesPerRow int, hiliteAddr 
 		str.WriteRune('\n')
 	}
 }
+

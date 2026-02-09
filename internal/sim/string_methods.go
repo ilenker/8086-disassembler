@@ -35,15 +35,17 @@ func (arg Argument) String() string {
 
 func (cpu *CPUContext) String() string {
 	str := strings.Builder{}
-	str.WriteString(cRed(fmt.Sprintf("Ax(%5d): %#02x, %#02x\n", cpu.Registers[AX], cpu.Registers[AX]>>8, byte(cpu.Registers[AX]))))
-	str.WriteString(cBlu(fmt.Sprintf("Cx(%5d): %#02x, %#02x\n", cpu.Registers[CX], cpu.Registers[CX]>>8, byte(cpu.Registers[CX]))))
-	str.WriteString(cGrn(fmt.Sprintf("Dx(%5d): %#02x, %#02x\n", cpu.Registers[DX], cpu.Registers[DX]>>8, byte(cpu.Registers[DX]))))
-	str.WriteString(cYel(fmt.Sprintf("Bx(%5d): %#02x, %#02x\n", cpu.Registers[BX], cpu.Registers[BX]>>8, byte(cpu.Registers[BX]))))
-        
-	str.WriteString(fmt.Sprintf("SP(%5d): %#04x\n", cpu.Registers[SP], cpu.Registers[SP]))
-	str.WriteString(fmt.Sprintf("BP(%5d): %#04x\n", cpu.Registers[BP], cpu.Registers[BP]))
-	str.WriteString(fmt.Sprintf("SI(%5d): %#04x\n", cpu.Registers[SI], cpu.Registers[SI]))
-	str.WriteString(fmt.Sprintf("DI(%5d): %#04x\n", cpu.Registers[DI], cpu.Registers[DI]))
+	str.WriteString(cRed(fmt.Sprintf("Ax(%5d): %#02x %#02x", cpu.Registers[AX], cpu.Registers[AX]>>8, byte(cpu.Registers[AX]))))
+	str.WriteString(fmt.Sprintf(" | SP(%5d): %#04x\n", cpu.Registers[SP], cpu.Registers[SP]))
+	str.WriteString(cBlu(fmt.Sprintf("Cx(%5d): %#02x %#02x", cpu.Registers[CX], cpu.Registers[CX]>>8, byte(cpu.Registers[CX]))))
+	str.WriteString(fmt.Sprintf(" | BP(%5d): %#04x\n", cpu.Registers[BP], cpu.Registers[BP]))
+	str.WriteString(cGrn(fmt.Sprintf("Dx(%5d): %#02x %#02x", cpu.Registers[DX], cpu.Registers[DX]>>8, byte(cpu.Registers[DX]))))
+	str.WriteString(fmt.Sprintf(" | SI(%5d): %#04x\n", cpu.Registers[SI], cpu.Registers[SI]))
+	str.WriteString(cYel(fmt.Sprintf("Bx(%5d): %#02x %#02x", cpu.Registers[BX], cpu.Registers[BX]>>8, byte(cpu.Registers[BX]))))
+	str.WriteString(fmt.Sprintf(" | DI(%5d): %#04x\n", cpu.Registers[DI], cpu.Registers[DI]))
+
+	str.WriteString(" | Flags(" + cpu.Flags.String() + ")\n")
+	str.WriteString(fmt.Sprintf(" | IP: %#02x\n", cpu.IP))
 
 	return str.String()
 }
