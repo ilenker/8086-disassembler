@@ -78,7 +78,7 @@ func (ctx *CTX) drawASMLine() {
 		fmt.Println(ctx.inst.renderAsASM86())
 		return
 	}
-	x := 30
+	x := 26
 	scr.PutStr(x, 4+ctx.inst.srcIndex, ctx.inst.renderAsASM86())
 	for i := range 50 {
 		scr.PutStr(x-1, 4+i, " ")

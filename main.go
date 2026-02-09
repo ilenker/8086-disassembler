@@ -46,7 +46,6 @@ func main() {
 		}
 	}
 
-
 	cpu := sim.CPUContext{}
 	ctx := CTX{
 		args:   Args{},
@@ -56,17 +55,17 @@ func main() {
 		stepCh: make(chan any),
 	}
 	ctx.setup()
-	copy(cpu.Memory[:], binary)
-
 	ctx.doPreArgs()
+	copy(cpu.Memory[:], binary)
 	ctx.timerStart = time.Now()
 
 	if ctx.args.tui {
+		ctx.generateSource()
 		go func() {
 			t := time.NewTicker(time.Second/30)
 			for {
 				<-t.C
-				ctx.drawMemoryRegionRGBA(256, 64, 4, 64, 64)
+				ctx.drawMemoryRegionRGBA(256, 54, 4, 64, 64)
 				ctx.drawCPU()
 				scr.Show()
 				if !ctx.getInput() {
@@ -79,6 +78,7 @@ func main() {
 
 	if ctx.args.exec {
 		ctx.t = time.NewTicker(time.Nanosecond*ctx.spd)
+		ctx.t.Stop()
 		for cpu.IP < len(binary) {
 			ctx.inst, _, _ = parseInstruction(cpu.IP, cpu.Memory[:])
 			ctx.drawASMLine()
@@ -102,11 +102,14 @@ func main() {
 		}
 	}
 
-	//ctx.doPostArgs()
+	ctx.doPostArgs()
 	if ctx.args.dump {
 		os.WriteFile("8086_memory.data", cpu.Memory[:], 0644)
 	}
-	for{time.Sleep(time.Millisecond*10)}
+
+	if ctx.args.tui {
+		select{}
+	}
 }
 
 func (i *Instruction) renderAsASM86() string {
@@ -307,7 +310,6 @@ func (ctx *CTX) doPreArgs() {
 }
 
 func (ctx *CTX) doArgs() {
-	return
 	if ctx.args.showCPU {
 		ctx.drawCPU()
 	}
@@ -339,5 +341,19 @@ func (ctx *CTX) doPostArgs() {
 			ctx.args.showMem.nBytes,
 			ctx.args.showMem.bytesPerRow,
 			ctx.args.showMem.start))
+	}
+}
+
+func (ctx *CTX) generateSource() {
+	var err error
+	inst := &Instruction{}
+	i := 0
+	for i < len(ctx.binary) {
+		inst, i, err = parseInstruction(i, ctx.binary)
+		if err != nil {
+			fmt.Println(cRed("parseInstruction fail: "), err)
+		}
+		ctx.inst = inst
+		ctx.drawASMLine()
 	}
 }
